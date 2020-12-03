@@ -5,8 +5,7 @@
 			"type": "shell",
 			"label": "C/C++: cpp build active file",
 			"command": "make",
-			"args": [
-			],
+			"args": [],
 			"options": {
 				"cwd": "${workspaceFolder}"
 			},
@@ -17,6 +16,16 @@
 				"kind": "build",
 				"isDefault": true
 			}
+		},
+		{
+			"type": "shell",
+			"label": "CMAKE configure",
+			"command": "cmake .",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
 		}
 	]
 }

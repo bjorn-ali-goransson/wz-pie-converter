@@ -9,7 +9,7 @@ int main(int argc, char **argv) {
 	kaitai::kstream ks(&is);
 	blender_blend_t data(&ks);
 
-	printf("Value: %s\n", data.hdr()->version()); // => get hdr
+	printf("Value: %s\n", data.hdr()->version().c_str()); // => get hdr
 
 	return 0;
 }

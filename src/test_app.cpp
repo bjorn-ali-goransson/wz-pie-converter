@@ -5,11 +5,11 @@
 
 int main(int argc, char **argv) {
 	printf("Starting\n");
-	std::ifstream is("path/to/local/file.blend", std::ifstream::binary);
+	std::ifstream is("/home/bjorn/Desktop/blender-convert/cube.blend", std::ifstream::binary);
 	kaitai::kstream ks(&is);
 	blender_blend_t data(&ks);
 
-	printf("Value: %s\n", data.hdr()->version().c_str()); // => get hdr
+	printf("File blender version: %s\n", data.hdr()->version().c_str()); // => get hdr
 
 	return 0;
 }

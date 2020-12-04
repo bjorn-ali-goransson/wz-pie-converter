@@ -13,12 +13,40 @@ int main(int argc, char **argv) {
 
 	printf("Number of blocks: %i\n", (int)data.blocks()->size());
 
-	for(auto &block : *data.blocks()){
-		printf("Types: \n");
+	auto &structs = *data.sdna_structs();
 
-		for(auto &type : *block->body()->types()){
-			printf("  %s\n", type.c_str());
+	// for(auto &_struct : *data.sdna_structs()){
+	// 	if(_struct->type() != "Mesh"){
+	// 		continue;
+	// 	}
+
+	// 	for(auto &_field : *_struct->fields()){
+	// 		printf("%s (%s)\n", _field->name().c_str(), _field->type().c_str());
+	// 	}
+	// }
+
+	for(auto &block : *data.blocks()){
+		if(block->count() == 0){
+			continue;
 		}
+
+		printf("%s[%i = %s] (structs: %i)\n", block->code().c_str(), block->sdna_index(), structs.at(block->sdna_index())->type().c_str(), block->count());
+
+		if(block->code() != "DNA1"){
+			continue;
+		}
+
+		printf("Block (%s)\n", block->code().c_str());
+
+		auto &body = *block->body();
+
+		// auto &body = *block->count();
+
+		// printf("Types (%i): \n", body.count());
+
+		// for(auto &type : *block->body()->types()){
+		// 	printf("  %s\n", type.c_str());
+		// }
 	}
 
 	return 0;

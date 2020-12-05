@@ -179,6 +179,7 @@ int main(int argc, char **argv) {
 		printf("Usage:\n");
 		printf("  blender-convert [file] --list-blocks          // lists all data blocks\n");
 		printf("  blender-convert [file] --list-block-with-code // lists a data block by code\n");
+		printf("  blender-convert [file] --list-types           // lists all types\n");
 		printf("  blender-convert [file] --list-structs         // lists all structs\n");
 		printf("  blender-convert [file] --list-struct [type]   // lists a specific struct\n");
 

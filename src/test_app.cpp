@@ -32,14 +32,6 @@ class DataPart {
 		this->offset = pos;
 		this->stream = dataSource.getStream(pos);
 		this->type = &type;
-		
-		printf("%s\n", type.type().c_str());
-		
-		for(auto &_field : *type.fields()){
-			printf("  %s (%s)\n", _field->name().c_str(), _field->type().c_str());
-		}
-
-		printf("\n\n");
 	}
 
 	std::unique_ptr<DataPart> getPart(std::string name){
@@ -174,16 +166,100 @@ class DataBlock {
 };
 
 int main(int argc, char **argv) {
-	printf("Starting\n");
+	std::vector<std::string> arguments;
+	for(int i = 0; i < argc; i++){
+		arguments.push_back(argv[i]);
+	}
+
 	std::ifstream is("/home/bjorn/Desktop/blender-convert/cube.blend", std::ifstream::binary);
 	kaitai::kstream ks(&is);
 	blender_blend_t data(&ks);
+
+	if(arguments.size() == 2 && arguments.at(1) == "--help"){
+		printf("Usage:\n");
+		printf("  blender-convert [file] --list-blocks          // lists all data blocks\n");
+		printf("  blender-convert [file] --list-block-with-code // lists a data block by code\n");
+		printf("  blender-convert [file] --list-structs         // lists all structs\n");
+		printf("  blender-convert [file] --list-struct [type]   // lists a specific struct\n");
+
+		return 0;
+	}
+	if(arguments.size() == 2 && arguments.at(1) == "--list-blocks"){
+		int i = 0;
+		for(auto &block : *data.blocks()){
+			printf("%i: %s \n", i++, block->code().c_str());
+		}
+
+		return 0;
+	}
+	if(arguments.size() == 3 && arguments.at(1) == "--list-block-with-code"){
+		int i = 0;
+		std::string code = arguments.at(2);
+		for(auto &block : *data.blocks()){
+			if(block->code() != code){
+				i++;
+				continue;
+			}
+			printf("%i: %s\n", i, block->code().c_str());
+			return 0;
+		}
+
+		printf("Not found\n");
+
+		return 0;
+	}
+	if(arguments.size() == 2 && arguments.at(1) == "--list-types"){
+		for(auto &block : *data.blocks()){
+			if(block->code() != "DNA1"){
+				continue;
+			}
+
+			auto &body = *block->body();
+
+			for(int i = 0; i < body.num_types(); i++){
+				printf("%s (%i)\n", body.names()->at(i).c_str(), body.lengths()->at(i));
+			}
+		}
+
+		return 0;
+	}
+	if(arguments.size() == 2 && arguments.at(1) == "--list-structs"){
+		for(auto &sdna_struct : *data.sdna_structs()){
+			printf("%s\n", sdna_struct->type().c_str());
+			for(auto &field : *sdna_struct->fields()){
+				printf("  %s (%s)\n", field->name().c_str(), field->type().c_str());
+			}
+			printf("\n");
+		}
+
+		return 0;
+	}
+	if(arguments.size() == 3 && arguments.at(1) == "--list-struct"){
+		for(auto &sdna_struct : *data.sdna_structs()){
+			if(sdna_struct->type() != arguments.at(2)){
+				continue;
+			}
+
+			printf("%s\n", sdna_struct->type().c_str());
+			for(auto &field : *sdna_struct->fields()){
+				printf("  %s (%s)\n", field->name().c_str(), field->type().c_str());
+			}
+			printf("\n");
+			return 0;
+		}
+
+		printf("Not found\n");
+
+		return 0;
+	}
 
 	printf("File blender version: %s\n", data.hdr()->version().c_str()); // => get hdr
 
 	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(data, std::string("ME\0\0", 4)));
 
-	printf("%s\n", mesh->part->getPart("id")->getString("name").c_str());
+
+
+	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
 	// this is for listing data types
 	// for(auto &sdna_struct : *data.sdna_structs()){

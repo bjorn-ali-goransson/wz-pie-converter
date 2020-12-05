@@ -177,6 +177,7 @@ int main(int argc, char **argv) {
 
 	if(arguments.size() == 2 && arguments.at(1) == "--help"){
 		printf("Usage:\n");
+		printf("  blender-convert [file] --list-header          // lists file header\n");
 		printf("  blender-convert [file] --list-blocks          // lists all data blocks\n");
 		printf("  blender-convert [file] --list-block-with-code // lists a data block by code\n");
 		printf("  blender-convert [file] --list-types           // lists all types\n");
@@ -190,6 +191,15 @@ int main(int argc, char **argv) {
 		for(auto &block : *data.blocks()){
 			printf("%i: %s \n", i++, block->code().c_str());
 		}
+
+		return 0;
+	}
+	if(arguments.size() == 2 && arguments.at(1) == "--list-header"){
+		auto header = data.hdr();
+
+		printf("Blender version: %s \n", header->version().c_str());
+		printf("Pointer size: %i \n", (int)header->psize());
+		printf("Endianness: %s \n", header->endian() == blender_blend_t::ENDIAN_BE ? "BE" : "LE");
 
 		return 0;
 	}
@@ -218,7 +228,7 @@ int main(int argc, char **argv) {
 			auto &body = *block->body();
 
 			for(int i = 0; i < body.num_types(); i++){
-				printf("%s (%i)\n", body.names()->at(i).c_str(), body.lengths()->at(i));
+				printf("%s (%i)\n", body.types()->at(i).c_str(), body.lengths()->at(i));
 			}
 		}
 
@@ -254,7 +264,7 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	printf("File blender version: %s\n", data.hdr()->version().c_str()); // => get hdr
+	//
 
 	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(data, std::string("ME\0\0", 4)));
 

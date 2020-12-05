@@ -65,13 +65,34 @@ class DataPart {
 	}
 
 	std::string getString(std::string name){
-		int offset = getOffsetOf(name);
-		int size = getArrayLength(name);
+		blender_blend_t::dna_field_t *field = nullptr;
 
-		stream->seek(offset * 2);
+		for(auto &f : *type->fields()){
+			if(f->name() == name){
+				field = &*f;
+				break;
+			}
+
+			int bracketPosition = f->name().find('[');
+
+			if(bracketPosition != -1 && f->name().substr(0, bracketPosition) == name){
+				field = &*f;
+				break;
+			}
+		}
+
+		if(field == nullptr){
+			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + type->type());
+		}
+
+		int offset = getOffsetOf(field->name());
+		int size = getArrayLength(field->name());
+
+		stream->seek(offset);
 		return kaitai::kstream::bytes_to_str(stream->read_bytes(66), std::string("ASCII"));
 	}
 
+	/// Gets the memory offset of the field with the complete name, including pointer and array specifiers.
 	int getArrayLength(std::string name){
 		int bracketPosition = name.find('[');
 
@@ -93,17 +114,12 @@ class DataPart {
 		return std::stoi(arrayLengthString);
 	}
 
+	/// Gets the memory offset of the field with the complete name, including pointer and array specifiers.
 	int getOffsetOf(std::string name){
 		int internalOffset = 0;
 
 		for(auto &field : *type->fields()){
 			if(field->name() == name){
-				break;
-			}
-
-			int bracketPosition = field->name().find('[');
-
-			if(bracketPosition != -1 && field->name().substr(0, bracketPosition) == name){
 				break;
 			}
 			
@@ -116,8 +132,10 @@ class DataPart {
 	int getSizeOf(blender_blend_t::dna_field_t &field){
 		int size;
 
+		// TODO: Extract this from the SDNA block.
+
 		if(field.name()[0] == '*'){
-			size = 4;
+			size = 8;
 		} else if(field.type() == "char"){
 			size = 1;
 		} else if(field.type() == "short"){

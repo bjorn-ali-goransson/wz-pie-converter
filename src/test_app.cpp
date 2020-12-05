@@ -35,26 +35,13 @@ int main(int argc, char **argv) {
 
 	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(data, "ME"));
 
-	for(auto &sdna_struct : *data.sdna_structs()){
-		printf("%s\n", sdna_struct->type().c_str());
-
-		for(auto &field : *sdna_struct->fields()){
-			printf("  %s (%s)\n", field->name().c_str(), field->type().c_str());
-		}
-
-		printf("\n");
-	}
-
-	// for(auto &block : *data.blocks()){
-	// 	printf("%s[%i = %s] (structs: %i)\n", block->code().c_str(), block->sdna_index(), structs.at(block->sdna_index())->type().c_str(), block->count());
-
-	// 	if(block->code() != "DNA1"){
-	// 		continue;
+	// this is for listing data types
+	// for(auto &sdna_struct : *data.sdna_structs()){
+	// 	printf("%s\n", sdna_struct->type().c_str());
+	// 	for(auto &field : *sdna_struct->fields()){
+	// 		printf("  %s (%s)\n", field->name().c_str(), field->type().c_str());
 	// 	}
-
-	// 	printf("Block (%s)\n", block->code().c_str());
-
-	// 	auto &body = *block->body();
+	// 	printf("\n");
 	// }
 
 	return 0;

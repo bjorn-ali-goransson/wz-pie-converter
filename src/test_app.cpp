@@ -32,6 +32,12 @@ class Pointer {
 			);
 		}
 	}
+
+	std::string toString(){
+		char buff[18];
+		snprintf(buff, sizeof(buff), "0x%04x%04x", big, small);
+		return buff;
+	}
 };
 
 class BlendFile {
@@ -275,7 +281,7 @@ int main(int argc, char **argv) {
 
 			std::unique_ptr<Pointer> memaddr = std::unique_ptr<Pointer>(new Pointer(block->mem_addr().c_str(), blend.pointerSize));
 
-			printf("[%i] 0x%04x%04x : %s\n", i, memaddr->big, memaddr->small, block->code().c_str());
+			printf("[%i] %s : %s\n", i, memaddr->toString().c_str(), block->code().c_str());
 			return 0;
 		}
 

@@ -3,7 +3,13 @@
 #include <kaitai/kaitaistream.h>
 #include "blender_blend.h"
 
-// References: http://homac.cakelab.org/projects/JavaBlend/spec.html
+// References:
+//   https://formats.kaitai.io/blender_blend/index.html
+//   http://homac.cakelab.org/projects/JavaBlend/spec.html
+//   https://developer.blender.org/diffusion/B/browse/master/doc/blender_file_format/BlendFileReader.py
+//   https://fossies.org/linux/blender/doc/blender_file_format/mystery_of_the_blend.html
+//   https://archive.blender.org/wiki/index.php/Dev:Source/Architecture/File_Format/#Structure_DNA
+//   https://wiki.blender.org/wiki/Source/Architecture/RNA
 
 class Pointer {
 	public:

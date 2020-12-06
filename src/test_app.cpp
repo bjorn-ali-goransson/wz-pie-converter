@@ -206,6 +206,26 @@ int main(int argc, char **argv) {
 	if(arguments.size() == 3 && arguments.at(1) == "--list-block-with-code"){
 		int i = 0;
 		std::string code = arguments.at(2);
+
+		if(code.length() == 2){
+			char codeChars[4] = {
+				code[0],
+				code[1],
+				'\0',
+				'\0',
+			};
+			code = std::string(codeChars, 4);
+		}
+		if(code.length() == 3){
+			char codeChars[4] = {
+				code[0],
+				code[1],
+				code[2],
+				'\0',
+			};
+			code = std::string(codeChars, 4);
+		}
+
 		for(auto &block : *data.blocks()){
 			if(block->code() != code){
 				i++;

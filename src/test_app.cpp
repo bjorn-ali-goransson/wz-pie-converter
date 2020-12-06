@@ -268,18 +268,7 @@ int main(int argc, char **argv) {
 
 	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(data, std::string("ME\0\0", 4)));
 
-
-
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
-
-	// this is for listing data types
-	// for(auto &sdna_struct : *data.sdna_structs()){
-	// 	printf("%s\n", sdna_struct->type().c_str());
-	// 	for(auto &field : *sdna_struct->fields()){
-	// 		printf("  %s (%s)\n", field->name().c_str(), field->type().c_str());
-	// 	}
-	// 	printf("\n");
-	// }
 
 	return 0;
 }

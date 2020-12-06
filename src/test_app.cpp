@@ -5,6 +5,29 @@
 
 // References: http://homac.cakelab.org/projects/JavaBlend/spec.html
 
+class Pointer {
+	public:
+	unsigned int big = 0;
+	unsigned int small = 0;
+	Pointer(const char* data, int pointerSize){
+		small = static_cast<unsigned int>(
+			static_cast<unsigned char>(data[0]) << 24 |
+			static_cast<unsigned char>(data[1]) << 16 | 
+			static_cast<unsigned char>(data[2]) << 8  | 
+			static_cast<unsigned char>(data[3])
+		);
+
+		if(pointerSize == 8){
+			big = static_cast<unsigned int>(
+				static_cast<unsigned char>(data[4]) << 24 |
+				static_cast<unsigned char>(data[5]) << 16 | 
+				static_cast<unsigned char>(data[6]) << 8  | 
+				static_cast<unsigned char>(data[7])
+			);
+		}
+	}
+};
+
 class BlendFile {
 	public:
 	int pointerSize;
@@ -244,27 +267,9 @@ int main(int argc, char **argv) {
 				continue;
 			}
 
-			unsigned int memaddrBig = 0;
-			unsigned int memaddrSmall = 0;
-			const char* memaddrBuffer = block->mem_addr().c_str();
+			std::unique_ptr<Pointer> memaddr = std::unique_ptr<Pointer>(new Pointer(block->mem_addr().c_str(), blend.pointerSize));
 
-			memaddrSmall = static_cast<unsigned int>(
-				static_cast<unsigned char>(memaddrBuffer[0]) << 24 |
-				static_cast<unsigned char>(memaddrBuffer[1]) << 16 | 
-				static_cast<unsigned char>(memaddrBuffer[2]) << 8  | 
-				static_cast<unsigned char>(memaddrBuffer[3])
-			);
-
-			if(blend.pointerSize == 8){
-				memaddrBig = static_cast<unsigned int>(
-					static_cast<unsigned char>(memaddrBuffer[4]) << 24 |
-					static_cast<unsigned char>(memaddrBuffer[5]) << 16 | 
-					static_cast<unsigned char>(memaddrBuffer[6]) << 8  | 
-					static_cast<unsigned char>(memaddrBuffer[7])
-				);
-			}
-
-			printf("[%i] 0x%04x%04x : %s\n", i, memaddrBig, memaddrSmall, block->code().c_str());
+			printf("[%i] 0x%04x%04x : %s\n", i, memaddr->big, memaddr->small, block->code().c_str());
 			return 0;
 		}
 

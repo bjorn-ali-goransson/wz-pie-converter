@@ -3,6 +3,16 @@
 #include <kaitai/kaitaistream.h>
 #include "blender_blend.h"
 
+// References: http://homac.cakelab.org/projects/JavaBlend/spec.html
+
+class BlendFile {
+	public:
+	int pointerSize;
+	BlendFile(blender_blend_t &data){
+		pointerSize = data.hdr()->psize();
+	}
+};
+
 class DataSource {
 	private:
 	std::string raw_body;
@@ -175,6 +185,8 @@ int main(int argc, char **argv) {
 	kaitai::kstream ks(&is);
 	blender_blend_t data(&ks);
 
+	BlendFile blend(data);
+
 	if(arguments.size() == 2 && arguments.at(1) == "--help"){
 		printf("Usage:\n");
 		printf("  blender-convert [file] --list-header          // lists file header\n");
@@ -231,7 +243,28 @@ int main(int argc, char **argv) {
 				i++;
 				continue;
 			}
-			printf("%i: %s\n", i, block->code().c_str());
+
+			unsigned int memaddrBig = 0;
+			unsigned int memaddrSmall = 0;
+			const char* memaddrBuffer = block->mem_addr().c_str();
+
+			memaddrSmall = static_cast<unsigned int>(
+				static_cast<unsigned char>(memaddrBuffer[0]) << 24 |
+				static_cast<unsigned char>(memaddrBuffer[1]) << 16 | 
+				static_cast<unsigned char>(memaddrBuffer[2]) << 8  | 
+				static_cast<unsigned char>(memaddrBuffer[3])
+			);
+
+			if(blend.pointerSize == 8){
+				memaddrBig = static_cast<unsigned int>(
+					static_cast<unsigned char>(memaddrBuffer[4]) << 24 |
+					static_cast<unsigned char>(memaddrBuffer[5]) << 16 | 
+					static_cast<unsigned char>(memaddrBuffer[6]) << 8  | 
+					static_cast<unsigned char>(memaddrBuffer[7])
+				);
+			}
+
+			printf("[%i] 0x%04x%04x : %s\n", i, memaddrBig, memaddrSmall, block->code().c_str());
 			return 0;
 		}
 

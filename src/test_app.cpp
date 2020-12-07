@@ -51,14 +51,16 @@ class BlendType {
 	}
 };
 
-class BlendFile {
+class TypeProvider {
 	private:
+	blender_blend_t *data;
 	std::vector<std::unique_ptr<BlendType>> types;
 	std::map<std::string, BlendType*> typesByName;
 
 	public:
 	int pointerSize;
-	BlendFile(blender_blend_t &data){
+	TypeProvider(blender_blend_t &data){
+		this->data = &data;
 		pointerSize = data.hdr()->psize();
 
 		for(auto &block : *data.blocks()){
@@ -101,7 +103,7 @@ class DataSource {
 
 class DataPart {
 	private:
-	BlendFile *blend;
+	TypeProvider *typeProvider;
 	blender_blend_t *data;
 	DataSource *dataSource;
 	size_t offset;
@@ -109,13 +111,13 @@ class DataPart {
 	blender_blend_t::dna_struct_t *type;
 
 	public:
-	DataPart(BlendFile &blend, blender_blend_t &data, DataSource &dataSource, size_t pos, blender_blend_t::dna_struct_t &type){
-		this->blend = &blend;
-		this->data = &data;
-		this->dataSource = &dataSource;
+	DataPart(TypeProvider *typeProvider, blender_blend_t *data, DataSource *dataSource, size_t pos, blender_blend_t::dna_struct_t *type){
+		this->typeProvider = typeProvider;
+		this->data = data;
+		this->dataSource = dataSource;
 		this->offset = pos;
-		this->stream = dataSource.getStream(pos);
-		this->type = &type;
+		this->stream = dataSource->getStream(pos);
+		this->type = type;
 	}
 
 	std::unique_ptr<DataPart> getPart(std::string name){
@@ -134,7 +136,7 @@ class DataPart {
 				fieldType = &*sdna_struct;
 			}
 
-			return std::unique_ptr<DataPart>(new DataPart(*blend, *data, *dataSource, offset, *fieldType));
+			return std::unique_ptr<DataPart>(new DataPart(typeProvider, data, dataSource, offset, fieldType));
 		}
 
 		return nullptr;
@@ -165,6 +167,33 @@ class DataPart {
 
 		stream->seek(offset);
 		return stream->read_s4le();
+	}
+
+	std::unique_ptr<Pointer> getPointer(std::string name){
+		blender_blend_t::dna_field_t *field = nullptr;
+
+		for(auto &f : *type->fields()){
+			if(f->name() == name){
+				field = &*f;
+				break;
+			}
+
+			int bracketPosition = f->name().find('[');
+
+			if(bracketPosition != -1 && f->name().substr(0, bracketPosition) == name){
+				field = &*f;
+				break;
+			}
+		}
+
+		if(field == nullptr){
+			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + type->type());
+		}
+
+		int offset = getOffsetOf(field->name());
+
+		stream->seek(offset);
+		return std::unique_ptr<Pointer>(new Pointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize));
 	}
 
 	std::string getString(std::string name){
@@ -240,7 +269,7 @@ class DataPart {
 		if(field.name()[0] == '*'){
 			size = 8;
 		} else {
-			auto type = blend->getType(field.type());
+			auto type = typeProvider->getType(field.type());
 
 			if(type != nullptr){
 				size = type->size;
@@ -262,17 +291,76 @@ class DataBlock {
 	std::unique_ptr<DataSource> dataSource;
 	public:
 	std::unique_ptr<DataPart> part;
-	DataBlock(BlendFile &blend, blender_blend_t &data, std::string code){
-		for(auto &block : *data.blocks()){
+	int index;
+	std::string code;
+	std::unique_ptr<Pointer> memaddr;
+	DataBlock(TypeProvider *typeProvider, blender_blend_t *data, int index, std::string code, Pointer *memaddr){
+		this->index = index;
+		this->code = code;
+		this->memaddr = std::unique_ptr<Pointer>(memaddr);
+
+		for(auto &block : *data->blocks()){
 			if(block->code() != code){
 				continue;
 			}
 
-			auto &type = *data.sdna_structs()->at(block->sdna_index());
+			auto type = &*data->sdna_structs()->at(block->sdna_index());
 			dataSource = std::unique_ptr<DataSource>(new DataSource(block->_raw_body()));
 
-			part = std::unique_ptr<DataPart>(new DataPart(blend, data, *dataSource, 0, type));
+			part = std::unique_ptr<DataPart>(new DataPart(typeProvider, data, &*dataSource, 0, type));
 		}
+	}
+};
+
+class BlockProvider {
+	private:
+	TypeProvider *typeProvider;
+	blender_blend_t *data;
+
+	public:
+	int pointerSize;
+	BlockProvider(TypeProvider *typeProvider, blender_blend_t &data){
+		this->typeProvider = typeProvider;
+		this->data = &data;
+		pointerSize = data.hdr()->psize();
+	}
+
+	std::unique_ptr<DataBlock> getBlock(std::string code){
+		if(code.length() == 2){
+			char codeChars[4] = {
+				code[0],
+				code[1],
+				'\0',
+				'\0',
+			};
+			code = std::string(codeChars, 4);
+		}
+		if(code.length() == 3){
+			char codeChars[4] = {
+				code[0],
+				code[1],
+				code[2],
+				'\0',
+			};
+			code = std::string(codeChars, 4);
+		}
+
+		int index;
+
+		for(auto &block : *data->blocks()){
+			if(block->code() != code){
+				index++;
+				continue;
+			}
+
+			auto &body = *block->body();
+
+			Pointer *memaddr = new Pointer(block->mem_addr().c_str(), pointerSize);
+
+			return std::unique_ptr<DataBlock>(new DataBlock(typeProvider, data, index, code, memaddr));
+		}
+
+		throw std::runtime_error(std::string("Could not find block ") + code);
 	}
 };
 
@@ -286,7 +374,8 @@ int main(int argc, char **argv) {
 	kaitai::kstream ks(&is);
 	blender_blend_t data(&ks);
 
-	BlendFile blend(data);
+	TypeProvider typeProvider(data);
+	BlockProvider blockProvider(&typeProvider, data);
 
 	if(arguments.size() == 2 && arguments.at(1) == "--help"){
 		printf("Usage:\n");
@@ -317,42 +406,16 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 	if(arguments.size() == 3 && arguments.at(1) == "--list-block-with-code"){
-		int i = 0;
 		std::string code = arguments.at(2);
 
-		if(code.length() == 2){
-			char codeChars[4] = {
-				code[0],
-				code[1],
-				'\0',
-				'\0',
-			};
-			code = std::string(codeChars, 4);
-		}
-		if(code.length() == 3){
-			char codeChars[4] = {
-				code[0],
-				code[1],
-				code[2],
-				'\0',
-			};
-			code = std::string(codeChars, 4);
-		}
+		auto block = blockProvider.getBlock(code);
 
-		for(auto &block : *data.blocks()){
-			if(block->code() != code){
-				i++;
-				continue;
-			}
-
-			std::unique_ptr<Pointer> memaddr = std::unique_ptr<Pointer>(new Pointer(block->mem_addr().c_str(), blend.pointerSize));
-
-			printf("[%i] %s : %s\n", i, memaddr->toString().c_str(), block->code().c_str());
+		if(block == nullptr){
+			printf("Not found\n");
 			return 0;
 		}
 
-		printf("Not found\n");
-
+		printf("[%i] %s : %s\n", block->index, block->memaddr->toString().c_str(), block->code.c_str());
 		return 0;
 	}
 	if(arguments.size() == 2 && arguments.at(1) == "--list-types"){
@@ -402,11 +465,12 @@ int main(int argc, char **argv) {
 
 	//
 
-	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(blend, data, std::string("ME\0\0", 4)));
+	std::unique_ptr<DataBlock> mesh = blockProvider.getBlock("ME");
 
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
-	printf("Total vertices: %i\n", mesh->part->getInt("totvert"));
+	printf("Mesh block position: %s\n", mesh->memaddr->toString().c_str());
+	printf("Total vertices: %s\n", mesh->part->getPointer("**mat")->toString().c_str());
 
 	return 0;
 }

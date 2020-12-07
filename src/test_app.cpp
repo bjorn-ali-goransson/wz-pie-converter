@@ -2,6 +2,7 @@
 #include <fstream>
 #include <kaitai/kaitaistream.h>
 #include "blender_blend.h"
+#include <map>
 
 // References:
 //   https://formats.kaitai.io/blender_blend/index.html
@@ -40,11 +41,47 @@ class Pointer {
 	}
 };
 
+class BlendType {
+	public:
+	std::string name;
+	int size;
+	BlendType(std::string name, int size){
+		this->name = name;
+		this->size = size;
+	}
+};
+
 class BlendFile {
+	private:
+	std::vector<std::unique_ptr<BlendType>> types;
+	std::map<std::string, BlendType*> typesByName;
+
 	public:
 	int pointerSize;
 	BlendFile(blender_blend_t &data){
 		pointerSize = data.hdr()->psize();
+
+		for(auto &block : *data.blocks()){
+			if(block->code() != "DNA1"){
+				continue;
+			}
+
+			auto &body = *block->body();
+
+			for(int i = 0; i < body.num_types(); i++){
+				auto type = new BlendType(body.types()->at(i), body.lengths()->at(i));
+				types.push_back(std::unique_ptr<BlendType>(type));
+				typesByName.insert(std::make_pair(type->name, type));
+			}
+		}
+	}
+
+	BlendType* getType(std::string name){
+		if(!typesByName.count(name)){
+			return nullptr;
+		}
+
+		return typesByName.at(name);
 	}
 };
 
@@ -64,6 +101,7 @@ class DataSource {
 
 class DataPart {
 	private:
+	BlendFile *blend;
 	blender_blend_t *data;
 	DataSource *dataSource;
 	size_t offset;
@@ -71,7 +109,8 @@ class DataPart {
 	blender_blend_t::dna_struct_t *type;
 
 	public:
-	DataPart(blender_blend_t &data, DataSource &dataSource, size_t pos, blender_blend_t::dna_struct_t &type){
+	DataPart(BlendFile &blend, blender_blend_t &data, DataSource &dataSource, size_t pos, blender_blend_t::dna_struct_t &type){
+		this->blend = &blend;
 		this->data = &data;
 		this->dataSource = &dataSource;
 		this->offset = pos;
@@ -95,10 +134,37 @@ class DataPart {
 				fieldType = &*sdna_struct;
 			}
 
-			return std::unique_ptr<DataPart>(new DataPart(*data, *dataSource, offset, *fieldType));
+			return std::unique_ptr<DataPart>(new DataPart(*blend, *data, *dataSource, offset, *fieldType));
 		}
 
 		return nullptr;
+	}
+
+	int32_t getInt(std::string name){
+		blender_blend_t::dna_field_t *field = nullptr;
+
+		for(auto &f : *type->fields()){
+			if(f->name() == name){
+				field = &*f;
+				break;
+			}
+
+			int bracketPosition = f->name().find('[');
+
+			if(bracketPosition != -1 && f->name().substr(0, bracketPosition) == name){
+				field = &*f;
+				break;
+			}
+		}
+
+		if(field == nullptr){
+			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + type->type());
+		}
+
+		int offset = getOffsetOf(field->name());
+
+		stream->seek(offset);
+		return stream->read_s4le();
 	}
 
 	std::string getString(std::string name){
@@ -167,21 +233,21 @@ class DataPart {
 	}
 
 	int getSizeOf(blender_blend_t::dna_field_t &field){
-		int size;
+		int size = -1;
 
 		// TODO: Extract this from the SDNA block.
 
 		if(field.name()[0] == '*'){
 			size = 8;
-		} else if(field.type() == "char"){
-			size = 1;
-		} else if(field.type() == "short"){
-			size = 2;
-		} else if(field.type() == "int"){
-			size = 4;
-		} else if(field.type() == "float"){
-			size = 4;
 		} else {
+			auto type = blend->getType(field.type());
+
+			if(type != nullptr){
+				size = type->size;
+			}
+		}
+
+		if(size == -1) {
 			throw std::runtime_error(std::string("Unhandled type: ") + field.type());
 		}
 
@@ -196,7 +262,7 @@ class DataBlock {
 	std::unique_ptr<DataSource> dataSource;
 	public:
 	std::unique_ptr<DataPart> part;
-	DataBlock(blender_blend_t &data, std::string code){
+	DataBlock(BlendFile &blend, blender_blend_t &data, std::string code){
 		for(auto &block : *data.blocks()){
 			if(block->code() != code){
 				continue;
@@ -205,7 +271,7 @@ class DataBlock {
 			auto &type = *data.sdna_structs()->at(block->sdna_index());
 			dataSource = std::unique_ptr<DataSource>(new DataSource(block->_raw_body()));
 
-			part = std::unique_ptr<DataPart>(new DataPart(data, *dataSource, 0, type));
+			part = std::unique_ptr<DataPart>(new DataPart(blend, data, *dataSource, 0, type));
 		}
 	}
 };
@@ -336,9 +402,11 @@ int main(int argc, char **argv) {
 
 	//
 
-	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(data, std::string("ME\0\0", 4)));
+	std::unique_ptr<DataBlock> mesh = std::unique_ptr<DataBlock>(new DataBlock(blend, data, std::string("ME\0\0", 4)));
 
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
+
+	printf("Total vertices: %i\n", mesh->part->getInt("totvert"));
 
 	return 0;
 }

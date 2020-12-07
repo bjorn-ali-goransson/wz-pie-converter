@@ -13,9 +13,12 @@
 //   https://wiki.blender.org/wiki/Source/Architecture/RNA
 
 class Pointer {
+	private:
+	unsigned long int small = 0;
+	unsigned long int big = 0;
+
 	public:
-	unsigned int big = 0;
-	unsigned int small = 0;
+	unsigned long long int value = 0;
 	Pointer(const char* data, int pointerSize){
 		small = static_cast<unsigned int>(
 			static_cast<unsigned char>(data[0]) << 24 |
@@ -24,6 +27,8 @@ class Pointer {
 			static_cast<unsigned char>(data[3])
 		);
 
+		value = small;
+
 		if(pointerSize == 8){
 			big = static_cast<unsigned int>(
 				static_cast<unsigned char>(data[4]) << 24 |
@@ -31,6 +36,8 @@ class Pointer {
 				static_cast<unsigned char>(data[6]) << 8  | 
 				static_cast<unsigned char>(data[7])
 			);
+
+			value = big << 32 | value;
 		}
 	}
 
@@ -196,6 +203,12 @@ class DataPart {
 		return std::unique_ptr<Pointer>(new Pointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize));
 	}
 
+	std::unique_ptr<DataPart> getPointedData(std::string name){
+		auto pointer = getPointer(name);
+
+		return std::unique_ptr<DataPart>(new DataPart(typeProvider, data, dataSource, pointer->value - blockOffset, fieldType));
+	}
+
 	std::string getString(std::string name){
 		blender_blend_t::dna_field_t *field = nullptr;
 
@@ -263,8 +276,6 @@ class DataPart {
 
 	int getSizeOf(blender_blend_t::dna_field_t &field){
 		int size = -1;
-
-		// TODO: Extract this from the SDNA block.
 
 		if(field.name()[0] == '*'){
 			size = 8;
@@ -470,7 +481,7 @@ int main(int argc, char **argv) {
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
 	printf("Mesh block position: %s\n", mesh->memaddr->toString().c_str());
-	printf("Total vertices: %s\n", mesh->part->getPointer("**mat")->toString().c_str());
+	printf("Total vertices: %s\n", mesh->part->getPointedPart("**mat")->getPart("id")->getString("name").c_str());
 
 	return 0;
 }

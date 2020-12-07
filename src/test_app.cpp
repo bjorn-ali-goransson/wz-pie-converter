@@ -20,7 +20,7 @@ class Pointer {
 	public:
 	unsigned long long int value = 0;
 	Pointer(const char* data, int pointerSize){
-		small = static_cast<unsigned int>(
+		small = static_cast<unsigned long int>(
 			static_cast<unsigned char>(data[0]) << 24 |
 			static_cast<unsigned char>(data[1]) << 16 | 
 			static_cast<unsigned char>(data[2]) << 8  | 
@@ -30,7 +30,7 @@ class Pointer {
 		value = small;
 
 		if(pointerSize == 8){
-			big = static_cast<unsigned int>(
+			big = static_cast<unsigned long int>(
 				static_cast<unsigned char>(data[4]) << 24 |
 				static_cast<unsigned char>(data[5]) << 16 | 
 				static_cast<unsigned char>(data[6]) << 8  | 
@@ -42,32 +42,75 @@ class Pointer {
 	}
 
 	std::string toString(){
-		char buff[18];
-		snprintf(buff, sizeof(buff), "0x%04x%04x", big, small);
+		char buff[20];
+		snprintf(buff, sizeof(buff), "0x%08lx.%08lx", big, small);
 		return buff;
 	}
 };
 
+class BlendField{
+	public:
+	std::string name;
+	std::string type;
+	int size;
+	int offset;
+	int arraySize = -1;
+	BlendField(std::string name, std::string type, int size, int offset, int arraySize){
+		this->name = name;
+		this->type = type;
+		this->size = size;
+		this->offset = offset;
+		this->arraySize = arraySize;
+	}
+};
+
 class BlendType {
+	private:
+	std::vector<std::unique_ptr<BlendField>> fields;
+	std::map<std::string, BlendField*> fieldsByName;
+
 	public:
 	std::string name;
 	int size;
-	BlendType(std::string name, int size){
+	BlendType(std::string name, int size, std::vector<BlendField*> fields){
 		this->name = name;
 		this->size = size;
+
+		for(auto field : fields){
+			this->fields.push_back(std::unique_ptr<BlendField>(field));
+
+			this->fieldsByName[field->name] = field;
+		}
+	}
+
+	std::vector<BlendField*> getFields(){
+		std::vector<BlendField*> result;
+		for(auto &field : fields){
+			result.push_back(&*field);
+		}
+		return result;
+	}
+
+	BlendField* getField(std::string name){
+		if(!fieldsByName.count(name)){
+			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + this->name);
+		}
+
+		return fieldsByName.at(name);
 	}
 };
 
 class TypeProvider {
 	private:
-	blender_blend_t *data;
-	std::vector<std::unique_ptr<BlendType>> types;
+	blender_blend_t::dna1_body_t *dna;
 	std::map<std::string, BlendType*> typesByName;
+	std::map<int, std::string> typesBySdnaIndex;
+	std::map<std::string, int> sdnaIndexesByType;
+	std::map<std::string, int> typeLengths;
 
 	public:
 	int pointerSize;
 	TypeProvider(blender_blend_t &data){
-		this->data = &data;
 		pointerSize = data.hdr()->psize();
 
 		for(auto &block : *data.blocks()){
@@ -75,22 +118,93 @@ class TypeProvider {
 				continue;
 			}
 
-			auto &body = *block->body();
+			dna = &*block->body();
 
-			for(int i = 0; i < body.num_types(); i++){
-				auto type = new BlendType(body.types()->at(i), body.lengths()->at(i));
-				types.push_back(std::unique_ptr<BlendType>(type));
-				typesByName.insert(std::make_pair(type->name, type));
+			for(int i = 0; i < dna->num_structs(); i++){
+				auto type = &*dna->structs()->at(i);
+				
+				typesByName[type->type()] = nullptr;
+				typesBySdnaIndex[i] = type->type();
+				sdnaIndexesByType[type->type()] = i;
+			}
+
+			for(int i = 0; i < dna->num_types(); i++){
+				auto name = dna->types()->at(i);
+				auto typeLength = dna->lengths()->at(i);
+
+				typeLengths[name] = typeLength;
 			}
 		}
 	}
 
-	BlendType* getType(std::string name){
-		if(!typesByName.count(name)){
-			return nullptr;
+	BlendType* getType(int sdnaIndex){
+		if(!typesBySdnaIndex.count(sdnaIndex)){
+			char data[100];
+			sprintf(data, "Could not find type with SDNA index %i", sdnaIndex);
+			throw std::runtime_error(std::string(data));
 		}
 
-		return typesByName.at(name);
+		auto name = typesBySdnaIndex.at(sdnaIndex);
+
+		return getType(name);
+	}
+
+	BlendType* getType(std::string name){
+		if(!typesByName.count(name)){
+			throw std::runtime_error(std::string("Could not find type ") + name);
+		}
+
+		if(typesByName.at(name) != nullptr){
+			return typesByName.at(name);
+		}
+
+		int index = sdnaIndexesByType.at(name);
+
+		auto sdna_struct = &*dna->structs()->at(index);
+
+		std::vector<BlendField*> fields;
+		int offset = 0;
+		for(auto &field : *sdna_struct->fields()){
+			auto fieldName = field->name();
+			auto fieldType = field->type();
+			int size;
+			int arraySize = 1;
+
+			if(fieldName[0] == '*'){
+				size = pointerSize;
+			} else {
+				size = typeLengths[fieldType];
+			}
+
+			int bracketPosition = fieldName.find('[');
+
+			if(bracketPosition != -1){
+				int bracketEnd = fieldName.find(']');
+
+				if(bracketEnd == -1){
+					throw std::runtime_error(std::string("Array syntax was not name[length] - no end bracket"));
+				}
+				if(bracketEnd != fieldName.length() - 1){
+					throw std::runtime_error(std::string("Array syntax was not name[length] - something came after last bracket"));
+				}
+
+				arraySize = std::stoi(fieldName.substr(bracketPosition + 1, bracketEnd - bracketPosition));
+
+				fieldName = fieldName.substr(0, bracketPosition);
+			}
+
+			size *= arraySize;
+
+			fields.push_back(new BlendField(fieldName, fieldType, size, offset, arraySize));
+
+			offset += size;
+		}
+
+		auto type = new BlendType(name, offset, fields);
+
+		typesByName[type->name] = type;
+
+		return type;
 	}
 };
 
@@ -111,189 +225,56 @@ class DataSource {
 class DataPart {
 	private:
 	TypeProvider *typeProvider;
-	blender_blend_t *data;
 	DataSource *dataSource;
+	Pointer *blockPosition;
 	size_t offset;
 	std::unique_ptr<kaitai::kstream> stream;
-	blender_blend_t::dna_struct_t *type;
+	BlendType *type;
 
 	public:
-	DataPart(TypeProvider *typeProvider, blender_blend_t *data, DataSource *dataSource, size_t pos, blender_blend_t::dna_struct_t *type){
+	DataPart(TypeProvider *typeProvider, DataSource *dataSource, Pointer *blockPosition, size_t offset, BlendType *type){
 		this->typeProvider = typeProvider;
-		this->data = data;
 		this->dataSource = dataSource;
-		this->offset = pos;
-		this->stream = dataSource->getStream(pos);
+		this->blockPosition = blockPosition;
+		this->offset = offset;
+		this->stream = dataSource->getStream(offset);
 		this->type = type;
 	}
 
 	std::unique_ptr<DataPart> getPart(std::string name){
-		for(auto &field : *type->fields()){
-			if(field->name() != name){
-				continue;
-			}
+		auto field = type->getField(name);
+		auto type = typeProvider->getType(field->type);
 
-			blender_blend_t::dna_struct_t *fieldType = nullptr;
-
-			for(auto &sdna_struct : *data->sdna_structs()){
-				if(sdna_struct->type() != field->type()){
-					continue;
-				}
-
-				fieldType = &*sdna_struct;
-			}
-
-			return std::unique_ptr<DataPart>(new DataPart(typeProvider, data, dataSource, offset, fieldType));
-		}
-
-		return nullptr;
+		return std::unique_ptr<DataPart>(new DataPart(typeProvider, dataSource, blockPosition, field->offset, type));
 	}
 
 	int32_t getInt(std::string name){
-		blender_blend_t::dna_field_t *field = nullptr;
+		auto field = type->getField(name);
 
-		for(auto &f : *type->fields()){
-			if(f->name() == name){
-				field = &*f;
-				break;
-			}
-
-			int bracketPosition = f->name().find('[');
-
-			if(bracketPosition != -1 && f->name().substr(0, bracketPosition) == name){
-				field = &*f;
-				break;
-			}
-		}
-
-		if(field == nullptr){
-			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + type->type());
-		}
-
-		int offset = getOffsetOf(field->name());
-
-		stream->seek(offset);
+		stream->seek(field->offset);
 		return stream->read_s4le();
 	}
 
 	std::unique_ptr<Pointer> getPointer(std::string name){
-		blender_blend_t::dna_field_t *field = nullptr;
+		auto field = type->getField(name);
 
-		for(auto &f : *type->fields()){
-			if(f->name() == name){
-				field = &*f;
-				break;
-			}
-
-			int bracketPosition = f->name().find('[');
-
-			if(bracketPosition != -1 && f->name().substr(0, bracketPosition) == name){
-				field = &*f;
-				break;
-			}
-		}
-
-		if(field == nullptr){
-			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + type->type());
-		}
-
-		int offset = getOffsetOf(field->name());
-
-		stream->seek(offset);
+		stream->seek(field->offset);
 		return std::unique_ptr<Pointer>(new Pointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize));
 	}
 
 	std::unique_ptr<DataPart> getPointedData(std::string name){
+		auto field = type->getField(name);
+		auto type = typeProvider->getType(field->type);
 		auto pointer = getPointer(name);
 
-		return std::unique_ptr<DataPart>(new DataPart(typeProvider, data, dataSource, pointer->value - blockOffset, fieldType));
+		return std::unique_ptr<DataPart>(new DataPart(typeProvider, dataSource, blockPosition, (unsigned long int)(pointer->value - blockPosition->value), type));
 	}
 
 	std::string getString(std::string name){
-		blender_blend_t::dna_field_t *field = nullptr;
+		auto field = type->getField(name);
 
-		for(auto &f : *type->fields()){
-			if(f->name() == name){
-				field = &*f;
-				break;
-			}
-
-			int bracketPosition = f->name().find('[');
-
-			if(bracketPosition != -1 && f->name().substr(0, bracketPosition) == name){
-				field = &*f;
-				break;
-			}
-		}
-
-		if(field == nullptr){
-			throw std::runtime_error(std::string("Could not find field ") + name + " on type " + type->type());
-		}
-
-		int offset = getOffsetOf(field->name());
-		int size = getArrayLength(field->name());
-
-		stream->seek(offset);
-		return kaitai::kstream::bytes_to_str(stream->read_bytes(66), std::string("ASCII"));
-	}
-
-	/// Gets the memory offset of the field with the complete name, including pointer and array specifiers.
-	int getArrayLength(std::string name){
-		int bracketPosition = name.find('[');
-
-		if(bracketPosition == -1){
-			return 1;
-		}
-
-		int bracketEnd = name.find(']');
-
-		if(bracketEnd == -1){
-			throw std::runtime_error(std::string("Array syntax was not name[length] - no end bracket"));
-		}
-		if(bracketEnd != name.length() - 1){
-			throw std::runtime_error(std::string("Array syntax was not name[length] - something came after last bracket"));
-		}
-
-		auto arrayLengthString = name.substr(bracketPosition + 1, bracketEnd - bracketPosition);
-
-		return std::stoi(arrayLengthString);
-	}
-
-	/// Gets the memory offset of the field with the complete name, including pointer and array specifiers.
-	int getOffsetOf(std::string name){
-		int internalOffset = 0;
-
-		for(auto &field : *type->fields()){
-			if(field->name() == name){
-				break;
-			}
-			
-			internalOffset += getSizeOf(*field);
-		}
-
-		return internalOffset;
-	}
-
-	int getSizeOf(blender_blend_t::dna_field_t &field){
-		int size = -1;
-
-		if(field.name()[0] == '*'){
-			size = 8;
-		} else {
-			auto type = typeProvider->getType(field.type());
-
-			if(type != nullptr){
-				size = type->size;
-			}
-		}
-
-		if(size == -1) {
-			throw std::runtime_error(std::string("Unhandled type: ") + field.type());
-		}
-
-		size *= getArrayLength(field.name());
-		
-		return size;
+		stream->seek(field->offset);
+		return kaitai::kstream::bytes_to_str(stream->read_bytes(field->size), std::string("ASCII"));
 	}
 };
 
@@ -315,10 +296,10 @@ class DataBlock {
 				continue;
 			}
 
-			auto type = &*data->sdna_structs()->at(block->sdna_index());
+			auto type = typeProvider->getType(block->sdna_index());
 			dataSource = std::unique_ptr<DataSource>(new DataSource(block->_raw_body()));
 
-			part = std::unique_ptr<DataPart>(new DataPart(typeProvider, data, &*dataSource, 0, type));
+			part = std::unique_ptr<DataPart>(new DataPart(typeProvider, &*dataSource, memaddr, 0, type));
 		}
 	}
 };
@@ -480,8 +461,9 @@ int main(int argc, char **argv) {
 
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
-	printf("Mesh block position: %s\n", mesh->memaddr->toString().c_str());
-	printf("Total vertices: %s\n", mesh->part->getPointedPart("**mat")->getPart("id")->getString("name").c_str());
+
+	printf("Value A: 0x%08llx\n", mesh->part->getPointer("*bb")->value);
+	printf("Value B: %i\n", mesh->part->getPointedData("*bb")->getInt("flag"));
 
 	return 0;
 }

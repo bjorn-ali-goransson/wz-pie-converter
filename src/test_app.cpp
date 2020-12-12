@@ -128,6 +128,14 @@ class TypeProvider {
 		}
 	}
 
+	int getTypeLength(std::string name){
+		if(!typeLengths.count(name)){
+			throw std::runtime_error(std::string("Could not find type ") + name);
+		}
+
+		return typeLengths[name];
+	}
+
 	BlendType* getType(int sdnaIndex){
 		if(!typesBySdnaIndex.count(sdnaIndex)){
 			char data[100];
@@ -223,9 +231,9 @@ class DataPart {
 	unsigned long long blockPosition;
 	size_t offset;
 	std::unique_ptr<kaitai::kstream> stream;
-	BlendType *type;
 
 	public:
+	BlendType *type;
 	DataPart(TypeProvider *typeProvider, DataSource *dataSource, unsigned long long blockPosition, size_t offset, BlendType *type){
 		this->typeProvider = typeProvider;
 		this->dataSource = dataSource;
@@ -246,14 +254,28 @@ class DataPart {
 		auto field = type->getField(name);
 
 		stream->seek(field->offset);
+
+		if(this->typeProvider->getTypeLength("int") != 4){
+			char data[100];
+			sprintf(data, "Int sizes other than 4 bytes are not supported (was %i)", this->typeProvider->getTypeLength("int"));
+			throw std::runtime_error(std::string(data));
+		}
+
 		return stream->read_s4le();
 	}
 
-	unsigned long long getPointer(std::string name){
+	float getFloat(std::string name){
 		auto field = type->getField(name);
 
 		stream->seek(field->offset);
-		return readPointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize);
+
+		if(this->typeProvider->getTypeLength("float") != 4){
+			char data[100];
+			sprintf(data, "Float sizes other than 4 bytes are not supported (was %i)", this->typeProvider->getTypeLength("float"));
+			throw std::runtime_error(std::string(data));
+		}
+
+		return stream->read_f4le();
 	}
 
 	std::string getString(std::string name){
@@ -262,12 +284,18 @@ class DataPart {
 		stream->seek(field->offset);
 		return kaitai::kstream::bytes_to_str(stream->read_bytes(field->size), std::string("ASCII"));
 	}
+
+	unsigned long long getPointer(std::string name){
+		auto field = type->getField(name);
+
+		stream->seek(field->offset);
+		return readPointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize);
+	}
 };
 
 class DataBlock {
-	private:
-	std::unique_ptr<DataSource> dataSource;
 	public:
+	std::unique_ptr<DataSource> dataSource;
 	std::unique_ptr<DataPart> part;
 	int index;
 	std::string code;
@@ -403,6 +431,24 @@ class BlockProvider {
 	}
 };
 
+class PointedDataProvider {
+	private:
+	TypeProvider *typeProvider;
+	BlockProvider *blockProvider;
+	public:
+	PointedDataProvider(TypeProvider *typeProvider, BlockProvider *blockProvider){
+		this->typeProvider = typeProvider;
+		this->blockProvider = blockProvider;
+	}
+	std::unique_ptr<DataPart> getPointedData(DataPart *dataPart, BlendType *type, std::string name){
+		auto pointer = dataPart->getPointer("*mvert");
+		auto block = blockProvider->getBlock(pointer);
+		auto field = type->getField(name);
+
+		return std::unique_ptr<DataPart>(new DataPart(typeProvider, &*block->dataSource, block->memaddr, pointer - block->memaddr, typeProvider->getType(field->type)));
+	}
+};
+
 int main(int argc, char **argv) {
 	std::vector<std::string> arguments;
 	for(int i = 0; i < argc; i++){
@@ -415,6 +461,7 @@ int main(int argc, char **argv) {
 
 	TypeProvider typeProvider(data);
 	BlockProvider blockProvider(&typeProvider, data);
+	PointedDataProvider pointedDataProvider(&typeProvider, &blockProvider);
 
 	if(arguments.size() == 2 && arguments.at(1) == "--help"){
 		printf("Usage:\n");
@@ -508,30 +555,13 @@ int main(int argc, char **argv) {
 
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
-	auto pointer = mesh->part->getPointer("*mpoly");
+	printf("Total vertices: %i\n", mesh->part->getInt("totvert"));
 
-	std::unique_ptr<DataBlock> reffedBlock =
-		blockProvider.getBlock(pointer);
+	auto mvert = pointedDataProvider.getPointedData(&*mesh->part, mesh->part->type, "*mvert"); // MVert
 
-	printf("Pointer: 0x%08llx\n", pointer);
+	printf("Vertices:\n");
+	printf("X: %0.10f\n", mvert->getFloat("co"));
 
-/*
-  **mat (Material)
-  *mselect (MSelect)
-  *mpoly (MPoly)
-  *mloop (MLoop)
-  *mloopuv (MLoopUV)
-  *mloopcol (MLoopCol)
-  *mface (MFace)
-  *mtface (MTFace)
-  *tface (TFace)
-  *mvert (MVert)
-  *medge (MEdge)
-  *dvert (MDeformVert)
-  *mcol (MCol)
-  *texcomesh (Mesh)
-  *edit_mesh (BMEditMesh)
-*/
 
 
 	// std::unique_ptr<DataPart> getPointedData(std::string name){

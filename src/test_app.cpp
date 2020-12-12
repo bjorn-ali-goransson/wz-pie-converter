@@ -187,7 +187,7 @@ class TypeProvider {
 				arraySize = std::stoi(fieldName.substr(bracketPosition + 1, bracketEnd - bracketPosition));
 
 				if(bracketEnd != fieldName.length() - 1){
-					arraySize = 8*3;
+					arraySize = 8*3; // multidimensional arrays are hardcoded as being [x][3] for now.
 					//throw std::runtime_error(std::string("Array syntax was not name[length] - something came after last bracket"));
 				}
 
@@ -264,10 +264,10 @@ class DataPart {
 		return stream->read_s4le();
 	}
 
-	float getFloat(std::string name){
+	float getFloat(std::string name, unsigned int arrayIndex = 0){
 		auto field = type->getField(name);
 
-		stream->seek(field->offset);
+		stream->seek(field->offset + arrayIndex * this->typeProvider->getTypeLength("float"));
 
 		if(this->typeProvider->getTypeLength("float") != 4){
 			char data[100];
@@ -300,21 +300,12 @@ class DataBlock {
 	int index;
 	std::string code;
 	unsigned long long memaddr;
-	DataBlock(TypeProvider *typeProvider, blender_blend_t *data, int index, std::string code, unsigned long long memaddr){
+	DataBlock(DataSource *dataSource, DataPart *part, unsigned int index, std::string code, unsigned long long memaddr){
+		this->dataSource = std::unique_ptr<DataSource>(dataSource);
+		this->part = std::unique_ptr<DataPart>(part);
 		this->index = index;
 		this->code = code;
 		this->memaddr = memaddr;
-
-		for(auto &block : *data->blocks()){
-			if(block->code() != code){
-				continue;
-			}
-
-			auto type = typeProvider->getType(block->sdna_index());
-			dataSource = std::unique_ptr<DataSource>(new DataSource(block->_raw_body()));
-
-			part = std::unique_ptr<DataPart>(new DataPart(typeProvider, &*dataSource, memaddr, 0, type));
-		}
 	}
 };
 
@@ -324,12 +315,14 @@ class BlockItem {
 	unsigned int length;
 	unsigned int index;
 	std::string code;
+	blender_blend_t::file_block_t *block;
 
-	BlockItem(unsigned long long position, unsigned int length, unsigned int index, std::string code){
+	BlockItem(unsigned long long position, unsigned int length, unsigned int index, std::string code, blender_blend_t::file_block_t *block){
 		this->position = position;
 		this->length = length;
 		this->index = index;
 		this->code = code;
+		this->block = block;
 	}
 };
 
@@ -359,12 +352,12 @@ class BlockProvider {
 		for(auto &block : *data->blocks()){
 			auto position = readPointer(block->mem_addr().c_str(), pointerSize);
 
-			blocks.push_back(std::unique_ptr<BlockItem>(new BlockItem(position, block->len_body(), index++, std::string(block->code().c_str()))));
+			blocks.push_back(std::unique_ptr<BlockItem>(new BlockItem(position, block->len_body(), index++, std::string(block->code()), &*block)));
 		}
 
 		std::sort (blocks.begin(), blocks.end(), blockItemComparer);
 
-		BlockItem *selectedBlock = nullptr;
+		BlockItem *item = nullptr;
 
 		for(const auto &block : blocks){
 			if(block->position == 0){
@@ -380,7 +373,7 @@ class BlockProvider {
 				continue;
 			}
 
-			selectedBlock = &*block;
+			item = &*block;
 			candidates++;
 		}
 
@@ -390,7 +383,12 @@ class BlockProvider {
 			throw std::runtime_error(std::string(data));
 		}
 
-		return std::unique_ptr<DataBlock>(new DataBlock(typeProvider, data, selectedBlock->index, selectedBlock->code, selectedBlock->position));
+
+		auto type = typeProvider->getType(item->block->sdna_index());
+		auto dataSource = new DataSource(item->block->_raw_body());
+		auto part = new DataPart(typeProvider, dataSource, item->position, 0, type);
+
+		return std::unique_ptr<DataBlock>(new DataBlock(dataSource, part, item->index, item->code, item->position));
 	}
 
 	std::unique_ptr<DataBlock> getBlock(std::string code){
@@ -421,10 +419,13 @@ class BlockProvider {
 				continue;
 			}
 
-			auto &body = *block->body();
-			auto memaddr = readPointer(block->mem_addr().c_str(), pointerSize);
+			auto position = readPointer(block->mem_addr().c_str(), pointerSize);
 
-			return std::unique_ptr<DataBlock>(new DataBlock(typeProvider, data, index, code, memaddr));
+			auto type = typeProvider->getType(block->sdna_index());
+			auto dataSource = new DataSource(block->_raw_body());
+			auto part = new DataPart(typeProvider, dataSource, position, 0, type);
+
+			return std::unique_ptr<DataBlock>(new DataBlock(dataSource, part, index, std::string(block->code()), position));
 		}
 
 		throw std::runtime_error(std::string("Could not find block ") + code);
@@ -440,12 +441,13 @@ class PointedDataProvider {
 		this->typeProvider = typeProvider;
 		this->blockProvider = blockProvider;
 	}
-	std::unique_ptr<DataPart> getPointedData(DataPart *dataPart, BlendType *type, std::string name){
+	std::unique_ptr<DataPart> getPointedData(DataPart *dataPart, BlendType *type, std::string name, unsigned int arrayIndex = 0){
 		auto pointer = dataPart->getPointer("*mvert");
 		auto block = blockProvider->getBlock(pointer);
 		auto field = type->getField(name);
+		auto fieldType = typeProvider->getType(field->type);
 
-		return std::unique_ptr<DataPart>(new DataPart(typeProvider, &*block->dataSource, block->memaddr, pointer - block->memaddr, typeProvider->getType(field->type)));
+		return std::unique_ptr<DataPart>(new DataPart(typeProvider, &*block->dataSource, block->memaddr, pointer - block->memaddr + fieldType->size * arrayIndex, fieldType));
 	}
 };
 
@@ -560,17 +562,9 @@ int main(int argc, char **argv) {
 	auto mvert = pointedDataProvider.getPointedData(&*mesh->part, mesh->part->type, "*mvert"); // MVert
 
 	printf("Vertices:\n");
-	printf("X: %0.10f\n", mvert->getFloat("co"));
-
-
-
-	// std::unique_ptr<DataPart> getPointedData(std::string name){
-	// 	auto field = type->getField(name);
-	// 	auto type = typeProvider->getType(field->type);
-	// 	auto pointer = getPointer(name);
-
-	// 	return std::unique_ptr<DataPart>(new DataPart(typeProvider, dataSource, blockPosition, pointer->value - blockPosition->value, type));
-	// }
+	printf("X: %0.10f\n", mvert->getFloat("co", 0));
+	printf("Y: %0.10f\n", mvert->getFloat("co", 1));
+	printf("Z: %0.10f\n", mvert->getFloat("co", 2));
 
 	return 0;
 }

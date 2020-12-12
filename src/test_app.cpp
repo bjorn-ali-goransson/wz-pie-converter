@@ -253,7 +253,7 @@ class DataPart {
 	int32_t getInt(std::string name){
 		auto field = type->getField(name);
 
-		stream->seek(field->offset);
+		stream->seek(offset + field->offset);
 
 		if(this->typeProvider->getTypeLength("int") != 4){
 			char data[100];
@@ -267,7 +267,7 @@ class DataPart {
 	float getFloat(std::string name, unsigned int arrayIndex = 0){
 		auto field = type->getField(name);
 
-		stream->seek(field->offset + arrayIndex * this->typeProvider->getTypeLength("float"));
+		stream->seek(offset + field->offset + arrayIndex * this->typeProvider->getTypeLength("float"));
 
 		if(this->typeProvider->getTypeLength("float") != 4){
 			char data[100];
@@ -281,14 +281,14 @@ class DataPart {
 	std::string getString(std::string name){
 		auto field = type->getField(name);
 
-		stream->seek(field->offset);
+		stream->seek(offset + field->offset);
 		return kaitai::kstream::bytes_to_str(stream->read_bytes(field->size), std::string("ASCII"));
 	}
 
 	unsigned long long getPointer(std::string name){
 		auto field = type->getField(name);
 
-		stream->seek(field->offset);
+		stream->seek(offset + field->offset);
 		return readPointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize);
 	}
 };
@@ -557,14 +557,22 @@ int main(int argc, char **argv) {
 
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
-	printf("Total vertices: %i\n", mesh->part->getInt("totvert"));
-
-	auto mvert = pointedDataProvider.getPointedData(&*mesh->part, mesh->part->type, "*mvert"); // MVert
+	auto vertexCount = mesh->part->getInt("totvert");
+	printf("Total vertices: %i\n", vertexCount);
 
 	printf("Vertices:\n");
-	printf("X: %0.10f\n", mvert->getFloat("co", 0));
-	printf("Y: %0.10f\n", mvert->getFloat("co", 1));
-	printf("Z: %0.10f\n", mvert->getFloat("co", 2));
+
+	for(int i = 0; i < vertexCount; i++){
+		if(i){
+			printf("----------\n");
+		}
+
+		auto mvert = pointedDataProvider.getPointedData(&*mesh->part, mesh->part->type, "*mvert", i);
+
+		printf("X: %0.10f\n", mvert->getFloat("co", 0));
+		printf("Y: %0.10f\n", mvert->getFloat("co", 1));
+		printf("Z: %0.10f\n", mvert->getFloat("co", 2));
+	}
 
 	return 0;
 }

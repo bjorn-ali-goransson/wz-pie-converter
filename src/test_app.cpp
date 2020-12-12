@@ -3,6 +3,7 @@
 #include <kaitai/kaitaistream.h>
 #include "blender_blend.h"
 #include <map>
+#include <algorithm>
 
 // References:
 //   https://formats.kaitai.io/blender_blend/index.html
@@ -12,40 +13,30 @@
 //   https://archive.blender.org/wiki/index.php/Dev:Source/Architecture/File_Format/#Structure_DNA
 //   https://wiki.blender.org/wiki/Source/Architecture/RNA
 
-class Pointer {
-	private:
-	unsigned long int small = 0;
-	unsigned long int big = 0;
-
-	public:
+unsigned long long readPointer(const char* data, int pointerSize) {
 	unsigned long long int value = 0;
-	Pointer(const char* data, int pointerSize){
-		small = static_cast<unsigned long int>(
-			static_cast<unsigned char>(data[0]) << 24 |
-			static_cast<unsigned char>(data[1]) << 16 | 
-			static_cast<unsigned char>(data[2]) << 8  | 
-			static_cast<unsigned char>(data[3])
+
+	auto small = static_cast<unsigned long int>(
+		static_cast<unsigned char>(data[0]) << 24 |
+		static_cast<unsigned char>(data[1]) << 16 | 
+		static_cast<unsigned char>(data[2]) << 8  | 
+		static_cast<unsigned char>(data[3])
+	);
+
+	value = small;
+
+	if(pointerSize == 8){
+		auto big = static_cast<unsigned long int>(
+			static_cast<unsigned char>(data[4]) << 24 |
+			static_cast<unsigned char>(data[5]) << 16 | 
+			static_cast<unsigned char>(data[6]) << 8  | 
+			static_cast<unsigned char>(data[7])
 		);
 
-		value = small;
-
-		if(pointerSize == 8){
-			big = static_cast<unsigned long int>(
-				static_cast<unsigned char>(data[4]) << 24 |
-				static_cast<unsigned char>(data[5]) << 16 | 
-				static_cast<unsigned char>(data[6]) << 8  | 
-				static_cast<unsigned char>(data[7])
-			);
-
-			value = big << 32 | value;
-		}
+		value = big << 32 | value;
 	}
 
-	std::string toString(){
-		char buff[20];
-		snprintf(buff, sizeof(buff), "0x%08lx.%08lx", big, small);
-		return buff;
-	}
+	return value;
 };
 
 class BlendField{
@@ -184,11 +175,14 @@ class TypeProvider {
 				if(bracketEnd == -1){
 					throw std::runtime_error(std::string("Array syntax was not name[length] - no end bracket"));
 				}
-				if(bracketEnd != fieldName.length() - 1){
-					throw std::runtime_error(std::string("Array syntax was not name[length] - something came after last bracket"));
-				}
 
 				arraySize = std::stoi(fieldName.substr(bracketPosition + 1, bracketEnd - bracketPosition));
+
+				if(bracketEnd != fieldName.length() - 1){
+					arraySize = 8*3;
+					//throw std::runtime_error(std::string("Array syntax was not name[length] - something came after last bracket"));
+				}
+
 
 				fieldName = fieldName.substr(0, bracketPosition);
 			}
@@ -226,13 +220,13 @@ class DataPart {
 	private:
 	TypeProvider *typeProvider;
 	DataSource *dataSource;
-	Pointer *blockPosition;
+	unsigned long long blockPosition;
 	size_t offset;
 	std::unique_ptr<kaitai::kstream> stream;
 	BlendType *type;
 
 	public:
-	DataPart(TypeProvider *typeProvider, DataSource *dataSource, Pointer *blockPosition, size_t offset, BlendType *type){
+	DataPart(TypeProvider *typeProvider, DataSource *dataSource, unsigned long long blockPosition, size_t offset, BlendType *type){
 		this->typeProvider = typeProvider;
 		this->dataSource = dataSource;
 		this->blockPosition = blockPosition;
@@ -255,19 +249,11 @@ class DataPart {
 		return stream->read_s4le();
 	}
 
-	std::unique_ptr<Pointer> getPointer(std::string name){
+	unsigned long long getPointer(std::string name){
 		auto field = type->getField(name);
 
 		stream->seek(field->offset);
-		return std::unique_ptr<Pointer>(new Pointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize));
-	}
-
-	std::unique_ptr<DataPart> getPointedData(std::string name){
-		auto field = type->getField(name);
-		auto type = typeProvider->getType(field->type);
-		auto pointer = getPointer(name);
-
-		return std::unique_ptr<DataPart>(new DataPart(typeProvider, dataSource, blockPosition, (unsigned long int)(pointer->value - blockPosition->value), type));
+		return readPointer(stream->read_bytes(typeProvider->pointerSize).c_str(), typeProvider->pointerSize);
 	}
 
 	std::string getString(std::string name){
@@ -285,11 +271,11 @@ class DataBlock {
 	std::unique_ptr<DataPart> part;
 	int index;
 	std::string code;
-	std::unique_ptr<Pointer> memaddr;
-	DataBlock(TypeProvider *typeProvider, blender_blend_t *data, int index, std::string code, Pointer *memaddr){
+	unsigned long long memaddr;
+	DataBlock(TypeProvider *typeProvider, blender_blend_t *data, int index, std::string code, unsigned long long memaddr){
 		this->index = index;
 		this->code = code;
-		this->memaddr = std::unique_ptr<Pointer>(memaddr);
+		this->memaddr = memaddr;
 
 		for(auto &block : *data->blocks()){
 			if(block->code() != code){
@@ -304,6 +290,25 @@ class DataBlock {
 	}
 };
 
+class BlockItem {
+	public:
+	unsigned long long position;
+	unsigned int length;
+	unsigned int index;
+	std::string code;
+
+	BlockItem(unsigned long long position, unsigned int length, unsigned int index, std::string code){
+		this->position = position;
+		this->length = length;
+		this->index = index;
+		this->code = code;
+	}
+};
+
+bool blockItemComparer (const std::unique_ptr<BlockItem> &a, const std::unique_ptr<BlockItem> &b) {
+	return a->position < b->position;
+}
+
 class BlockProvider {
 	private:
 	TypeProvider *typeProvider;
@@ -315,6 +320,49 @@ class BlockProvider {
 		this->typeProvider = typeProvider;
 		this->data = &data;
 		pointerSize = data.hdr()->psize();
+	}
+
+	std::unique_ptr<DataBlock> getBlock(unsigned long long pointer){
+		int candidates = 0;
+
+		auto blocks = std::vector<std::unique_ptr<BlockItem>>();
+
+		unsigned int index;
+		for(auto &block : *data->blocks()){
+			auto position = readPointer(block->mem_addr().c_str(), pointerSize);
+
+			blocks.push_back(std::unique_ptr<BlockItem>(new BlockItem(position, block->len_body(), index++, std::string(block->code().c_str()))));
+		}
+
+		std::sort (blocks.begin(), blocks.end(), blockItemComparer);
+
+		BlockItem *selectedBlock = nullptr;
+
+		for(const auto &block : blocks){
+			if(block->position == 0){
+				continue; // ENDB block does that, empty markers to signify EOF.
+			}
+
+			auto blockEnd = block->position + block->length;
+
+			if(pointer < block->position){
+				continue;
+			}
+			if(pointer > blockEnd){
+				continue;
+			}
+
+			selectedBlock = &*block;
+			candidates++;
+		}
+
+		if(candidates > 1){
+			char data[100];
+			sprintf(data, "Ambigious pointer reference - 0x%08llx resolves to multiple blocks", pointer);
+			throw std::runtime_error(std::string(data));
+		}
+
+		return std::unique_ptr<DataBlock>(new DataBlock(typeProvider, data, selectedBlock->index, selectedBlock->code, selectedBlock->position));
 	}
 
 	std::unique_ptr<DataBlock> getBlock(std::string code){
@@ -346,8 +394,7 @@ class BlockProvider {
 			}
 
 			auto &body = *block->body();
-
-			Pointer *memaddr = new Pointer(block->mem_addr().c_str(), pointerSize);
+			auto memaddr = readPointer(block->mem_addr().c_str(), pointerSize);
 
 			return std::unique_ptr<DataBlock>(new DataBlock(typeProvider, data, index, code, memaddr));
 		}
@@ -407,7 +454,7 @@ int main(int argc, char **argv) {
 			return 0;
 		}
 
-		printf("[%i] %s : %s\n", block->index, block->memaddr->toString().c_str(), block->code.c_str());
+		printf("[%i] 0x%08llx : %s\n", block->index, block->memaddr, block->code.c_str());
 		return 0;
 	}
 	if(arguments.size() == 2 && arguments.at(1) == "--list-types"){
@@ -461,9 +508,39 @@ int main(int argc, char **argv) {
 
 	printf("Converting mesh: %s\n", mesh->part->getPart("id")->getString("name").c_str());
 
+	auto pointer = mesh->part->getPointer("*mpoly");
 
-	printf("Value A: 0x%08llx\n", mesh->part->getPointer("*bb")->value);
-	printf("Value B: %i\n", mesh->part->getPointedData("*bb")->getInt("flag"));
+	std::unique_ptr<DataBlock> reffedBlock =
+		blockProvider.getBlock(pointer);
+
+	printf("Pointer: 0x%08llx\n", pointer);
+
+/*
+  **mat (Material)
+  *mselect (MSelect)
+  *mpoly (MPoly)
+  *mloop (MLoop)
+  *mloopuv (MLoopUV)
+  *mloopcol (MLoopCol)
+  *mface (MFace)
+  *mtface (MTFace)
+  *tface (TFace)
+  *mvert (MVert)
+  *medge (MEdge)
+  *dvert (MDeformVert)
+  *mcol (MCol)
+  *texcomesh (Mesh)
+  *edit_mesh (BMEditMesh)
+*/
+
+
+	// std::unique_ptr<DataPart> getPointedData(std::string name){
+	// 	auto field = type->getField(name);
+	// 	auto type = typeProvider->getType(field->type);
+	// 	auto pointer = getPointer(name);
+
+	// 	return std::unique_ptr<DataPart>(new DataPart(typeProvider, dataSource, blockPosition, pointer->value - blockPosition->value, type));
+	// }
 
 	return 0;
 }

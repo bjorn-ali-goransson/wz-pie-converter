@@ -441,10 +441,10 @@ class PointedDataProvider {
 		this->typeProvider = typeProvider;
 		this->blockProvider = blockProvider;
 	}
-	std::unique_ptr<DataPart> getPointedData(DataPart *dataPart, BlendType *type, std::string name, unsigned int arrayIndex = 0){
-		auto pointer = dataPart->getPointer("*mvert");
+	std::unique_ptr<DataPart> getPointedData(DataPart *dataPart, std::string name, unsigned int arrayIndex = 0){
+		auto pointer = dataPart->getPointer(name);
 		auto block = blockProvider->getBlock(pointer);
-		auto field = type->getField(name);
+		auto field = dataPart->type->getField(name);
 		auto fieldType = typeProvider->getType(field->type);
 
 		return std::unique_ptr<DataPart>(new DataPart(typeProvider, &*block->dataSource, block->memaddr, pointer - block->memaddr + fieldType->size * arrayIndex, fieldType));
@@ -559,20 +559,35 @@ int main(int argc, char **argv) {
 
 	auto vertexCount = mesh->part->getInt("totvert");
 	printf("Total vertices: %i\n", vertexCount);
+	auto polygonCount = mesh->part->getInt("totpoly");
+	printf("Total polys: %i\n", polygonCount);
+	printf("Total loops: %i\n", mesh->part->getInt("totloop"));
 
-	printf("Vertices:\n");
+	printf("Polygons:\n");
 
-	for(int i = 0; i < vertexCount; i++){
-		if(i){
-			printf("----------\n");
-		}
+	for(int i = 0; i < polygonCount; i++){
+		auto mpoly = pointedDataProvider.getPointedData(&*mesh->part, "*mpoly", i);
 
-		auto mvert = pointedDataProvider.getPointedData(&*mesh->part, mesh->part->type, "*mvert", i);
-
-		printf("X: %0.10f\n", mvert->getFloat("co", 0));
-		printf("Y: %0.10f\n", mvert->getFloat("co", 1));
-		printf("Z: %0.10f\n", mvert->getFloat("co", 2));
+		printf("Loop start: %i\n", mpoly->getInt("loopstart"));
+		printf("Loop length: %i\n", mpoly->getInt("totloop"));
 	}
+
+	// printf("Vertices:\n");
+	// for(int i = 0; i < vertexCount; i++){
+	// 	if(i){
+	// 		printf("----------\n");
+	// 	}
+	// 	auto mvert = pointedDataProvider.getPointedData(&*mesh->part, "*mvert", i);
+	// 	printf("  Vertex:\n");
+	// 	printf("    X: %0.10f\n", mvert->getFloat("co", 0));
+	// 	printf("    Y: %0.10f\n", mvert->getFloat("co", 1));
+	// 	printf("    Z: %0.10f\n", mvert->getFloat("co", 2));
+	// 	printf("  Normal:\n");
+	// 	printf("    X: %0.10f\n", mvert->getFloat("no", 0));
+	// 	printf("    Y: %0.10f\n", mvert->getFloat("no", 1));
+	// 	printf("    Z: %0.10f\n", mvert->getFloat("no", 2));
+	// dont forget normals in here!! "no"
+	// }
 
 	return 0;
 }

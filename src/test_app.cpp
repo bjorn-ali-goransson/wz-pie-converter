@@ -580,8 +580,23 @@ int main(int argc, char **argv) {
 	printf("Total polys: %i\n", polygonCount);
 	printf("Total loops: %i\n", mesh->part->getInt("totloop"));
 
-	printf("Polygons:\n");
+	printf("Vertices:\n");
+	for(int i = 0; i < vertexCount; i++){
+		if(i){
+			printf("----------\n");
+		}
+		auto mvert = pointedDataProvider.getPointedData(&*mesh->part, "*mvert", i);
+		printf("  Vertex:\n");
+		printf("    X: %0.10f\n", mvert->getFloat("co", 0));
+		printf("    Y: %0.10f\n", mvert->getFloat("co", 1));
+		printf("    Z: %0.10f\n", mvert->getFloat("co", 2));
+		printf("  Normal:\n");
+		printf("    X: %i\n", mvert->getShort("no", 0));
+		printf("    Y: %i\n", mvert->getShort("no", 1));
+		printf("    Z: %i\n", mvert->getShort("no", 2));
+	}
 
+	printf("Polygons:\n");
 	for(int i = 0; i < polygonCount; i++){
 		if(i){
 			printf("-------------\n");
@@ -601,22 +616,6 @@ int main(int argc, char **argv) {
 			printf("%i", vertexIndex);
 		}
 		printf("\n");
-	}
-
-	printf("Vertices:\n");
-	for(int i = 0; i < vertexCount; i++){
-		if(i){
-			printf("----------\n");
-		}
-		auto mvert = pointedDataProvider.getPointedData(&*mesh->part, "*mvert", i);
-		printf("  Vertex:\n");
-		printf("    X: %0.10f\n", mvert->getFloat("co", 0));
-		printf("    Y: %0.10f\n", mvert->getFloat("co", 1));
-		printf("    Z: %0.10f\n", mvert->getFloat("co", 2));
-		printf("  Normal:\n");
-		printf("    X: %i\n", mvert->getShort("no", 0));
-		printf("    Y: %i\n", mvert->getShort("no", 1));
-		printf("    Z: %i\n", mvert->getShort("no", 2));
 	}
 
 	return 0;

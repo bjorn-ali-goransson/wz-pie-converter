@@ -250,28 +250,45 @@ class DataPart {
 		return std::unique_ptr<DataPart>(new DataPart(typeProvider, dataSource, blockPosition, field->offset, type));
 	}
 
-	int32_t getInt(std::string name){
+	int32_t getInt(std::string name, unsigned int arrayIndex = 0){
 		auto field = type->getField(name);
 
-		stream->seek(offset + field->offset);
+		auto size = this->typeProvider->getTypeLength("int");
+		stream->seek(offset + field->offset + arrayIndex * size);
 
-		if(this->typeProvider->getTypeLength("int") != 4){
+		if(size != 4){
 			char data[100];
-			sprintf(data, "Int sizes other than 4 bytes are not supported (was %i)", this->typeProvider->getTypeLength("int"));
+			sprintf(data, "Int sizes other than 4 bytes are not supported (was %i)", size);
 			throw std::runtime_error(std::string(data));
 		}
 
 		return stream->read_s4le();
 	}
 
+	int32_t getShort(std::string name, unsigned int arrayIndex = 0){
+		auto field = type->getField(name);
+
+		auto size = this->typeProvider->getTypeLength("short");
+		stream->seek(offset + field->offset + arrayIndex * size);
+
+		if(size != 2){
+			char data[100];
+			sprintf(data, "Short sizes other than 2 bytes are not supported (was %i)", size);
+			throw std::runtime_error(std::string(data));
+		}
+
+		return stream->read_s2le();
+	}
+
 	float getFloat(std::string name, unsigned int arrayIndex = 0){
 		auto field = type->getField(name);
 
-		stream->seek(offset + field->offset + arrayIndex * this->typeProvider->getTypeLength("float"));
+		auto size = this->typeProvider->getTypeLength("float");
+		stream->seek(offset + field->offset + arrayIndex * size);
 
-		if(this->typeProvider->getTypeLength("float") != 4){
+		if(size != 4){
 			char data[100];
-			sprintf(data, "Float sizes other than 4 bytes are not supported (was %i)", this->typeProvider->getTypeLength("float"));
+			sprintf(data, "Float sizes other than 4 bytes are not supported (was %i)", size);
 			throw std::runtime_error(std::string(data));
 		}
 
@@ -566,28 +583,41 @@ int main(int argc, char **argv) {
 	printf("Polygons:\n");
 
 	for(int i = 0; i < polygonCount; i++){
+		if(i){
+			printf("-------------\n");
+		}
 		auto mpoly = pointedDataProvider.getPointedData(&*mesh->part, "*mpoly", i);
-
-		printf("Loop start: %i\n", mpoly->getInt("loopstart"));
-		printf("Loop length: %i\n", mpoly->getInt("totloop"));
+		auto loopIndex = mpoly->getInt("loopstart");
+		auto loopCount = mpoly->getInt("totloop");
+		printf("  Loop start: %i\n", loopIndex);
+		printf("  Loop count: %i\n", loopCount);
+		printf("  Points: ");
+		for(int j = loopIndex; j < loopIndex + loopCount; j++){
+			if(j > loopIndex){
+				printf(",");
+			}
+			auto mloop = pointedDataProvider.getPointedData(&*mesh->part, "*mloop", j);
+			auto vertexIndex = mloop->getInt("v");
+			printf("%i", vertexIndex);
+		}
+		printf("\n");
 	}
 
-	// printf("Vertices:\n");
-	// for(int i = 0; i < vertexCount; i++){
-	// 	if(i){
-	// 		printf("----------\n");
-	// 	}
-	// 	auto mvert = pointedDataProvider.getPointedData(&*mesh->part, "*mvert", i);
-	// 	printf("  Vertex:\n");
-	// 	printf("    X: %0.10f\n", mvert->getFloat("co", 0));
-	// 	printf("    Y: %0.10f\n", mvert->getFloat("co", 1));
-	// 	printf("    Z: %0.10f\n", mvert->getFloat("co", 2));
-	// 	printf("  Normal:\n");
-	// 	printf("    X: %0.10f\n", mvert->getFloat("no", 0));
-	// 	printf("    Y: %0.10f\n", mvert->getFloat("no", 1));
-	// 	printf("    Z: %0.10f\n", mvert->getFloat("no", 2));
-	// dont forget normals in here!! "no"
-	// }
+	printf("Vertices:\n");
+	for(int i = 0; i < vertexCount; i++){
+		if(i){
+			printf("----------\n");
+		}
+		auto mvert = pointedDataProvider.getPointedData(&*mesh->part, "*mvert", i);
+		printf("  Vertex:\n");
+		printf("    X: %0.10f\n", mvert->getFloat("co", 0));
+		printf("    Y: %0.10f\n", mvert->getFloat("co", 1));
+		printf("    Z: %0.10f\n", mvert->getFloat("co", 2));
+		printf("  Normal:\n");
+		printf("    X: %i\n", mvert->getShort("no", 0));
+		printf("    Y: %i\n", mvert->getShort("no", 1));
+		printf("    Z: %i\n", mvert->getShort("no", 2));
+	}
 
 	return 0;
 }
